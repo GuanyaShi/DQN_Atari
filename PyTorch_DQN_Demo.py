@@ -92,14 +92,14 @@ class DQN(nn.Module):
 
     def __init__(self):
         super(DQN, self).__init__()
-        self.conv1 = nn.Conv2d(1, 16, kernel_size=4, stride=2)
-        self.bn1 = nn.BatchNorm2d(16)
+        self.conv1 = nn.Conv2d(1, 8, kernel_size=4, stride=2)
+        self.bn1 = nn.BatchNorm2d(8)
         self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=4, stride=2)
-        self.bn2 = nn.BatchNorm2d(32)
-        self.conv3 = nn.Conv2d(32, 32, kernel_size=4, stride=2)
-        self.bn3 = nn.BatchNorm2d(32)
-        self.head = nn.Linear(288, 3)
+        self.conv2 = nn.Conv2d(8, 16, kernel_size=4, stride=2)
+        self.bn2 = nn.BatchNorm2d(16)
+        self.conv3 = nn.Conv2d(16, 16, kernel_size=4, stride=2)
+        self.bn3 = nn.BatchNorm2d(16)
+        self.head = nn.Linear(144, 2)
 
     def forward(self, x):
         x = F.relu(self.bn1(self.conv1(x)))
@@ -115,7 +115,7 @@ class DQN(nn.Module):
 resize = T.Compose([T.ToPILImage(), T.Grayscale(), T.Resize([74, 74]), T.ToTensor()])
 
 def get_screen():
-	# transpose into torch order (CHW)
+    # transpose into torch order (CHW)
     screen = env.render(mode='rgb_array').transpose((2, 0, 1))
     # Strip off the top and bottom of the screen
     screen = screen[:, 52:200, 6:154]
@@ -126,33 +126,25 @@ def get_screen():
     # Resize, and add a batch dimension (BCHW)
     output = resize(screen).unsqueeze(0).to(device)
     return output
-'''
-env.reset()
-env.step(1)
-plt.figure()
-plt.imshow(get_screen().cpu().squeeze(0).permute(1, 2, 0).numpy(), interpolation='none')
-plt.title('Example extracted screen')
-plt.show()
-'''
 
 
 #########################################################
 #########################################################
 # Training: Hyperparameters and utilities
-BATCH_SIZE = 128
+BATCH_SIZE = 256
 GAMMA = 0.999
-EPS_START = 0.9
+EPS_START = 0.95
 EPS_END = 0.05
-EPS_DECAY = 30000
-TARGET_UPDATE = 100
+EPS_DECAY = 200000
+TARGET_UPDATE = 200
 
 policy_net = DQN().to(device)
 target_net = DQN().to(device)
 target_net.load_state_dict(policy_net.state_dict())
 target_net.eval()
 
-optimizer = optim.RMSprop(policy_net.parameters())
-memory = ReplayMemory(30000)
+optimizer = optim.RMSprop(policy_net.parameters(), lr=0.00001)
+memory = ReplayMemory(100000)
 
 steps_done = 0
 
@@ -166,7 +158,7 @@ def select_action(state):
         with torch.no_grad():
             return policy_net(state).max(1)[1].view(1, 1)
     else:
-        return torch.tensor([[random.randrange(3)]], device=device, dtype=torch.long)
+        return torch.tensor([[random.randrange(2)]], device=device, dtype=torch.long)
 
 episode_durations = []
 
@@ -189,8 +181,9 @@ def plot_durations():
         display.clear_output(wait=True)
         display.display(plt.gcf())
 
-    if not len(durations_t) % 500:
-    	plt.savefig('Duration_' + str(len(durations_t)))
+    if len(durations_t) % 10 == 0:
+        plt.savefig('Duration_' + str(len(durations_t)) + '.png')
+
 
 #########################################################
 #########################################################
@@ -236,7 +229,7 @@ def optimize_model():
 #########################################################
 #########################################################
 # Training
-num_episodes = 20000
+num_episodes = 50000
 for i_episode in range(num_episodes):
     # Initialize the environment and state
     print(i_episode)
@@ -244,32 +237,36 @@ for i_episode in range(num_episodes):
     env.step(1)
     last_screen = get_screen()
     current_screen = get_screen()
-    state = current_screen - last_screen
+    state = 0.4*current_screen + 0.6*last_screen
+    # state = current_screen
     for t in count():
         # Select and perform an action
         action = select_action(state)
         Action = action.item()
-        if Action == 1 or Action == 2:
-        	Action += 1
+        Action += 2
         env.step(1)
-        _, reward, Done, info = env.step(Action)
-        env.render()
+        _, reward1, Done, info = env.step(Action)
+        _, reward2, Done, info = env.step(Action)
+        _, reward3, Done, info = env.step(Action)
+        # env.render()
+        reward = reward1 + reward2 + reward3
         reward = torch.tensor([reward], device=device)
       
         # Done or not
         if info['ale.lives'] > 4:
-        	done = False
+            done = False
         else:
-        	done = True
+            done = True
 
         if Done:
-        	done = True
+            done = True
 
         # Observe new state
         last_screen = current_screen
         current_screen = get_screen()
         if not done:
-            next_state = current_screen - last_screen
+            next_state = 0.4*current_screen + 0.6*last_screen
+            # next_state = current_screen
         else:
             next_state = None
 
@@ -289,12 +286,11 @@ for i_episode in range(num_episodes):
     if i_episode % TARGET_UPDATE == 0:
         target_net.load_state_dict(policy_net.state_dict())
 
-    if not i_episode % 1000:
-    	torch.save(policy_net.state_dict(), 'policy_net_' + str(i_episode) + '.pth')
-    	torch.save(target_net.state_dict(), 'target_net_' + str(i_episode) + '.pth')
+    if i_episode % 1000 == 0:
+        torch.save(policy_net.state_dict(), 'policy_net_' + str(i_episode) + '.pth')
+        torch.save(target_net.state_dict(), 'target_net_' + str(i_episode) + '.pth')
 
 print('Complete')
-env.render()
 env.close()
 plt.ioff()
 plt.show()
